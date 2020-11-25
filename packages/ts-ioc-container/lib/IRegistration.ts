@@ -1,4 +1,5 @@
-import { IServiceLocator } from './IServiceLocator';
+import { IDisposable } from './IDisposable';
+import { constructor, IServiceLocator } from './IServiceLocator';
 
 export type Resolving = 'singleton' | 'perScope' | 'perRequest';
 
@@ -6,11 +7,15 @@ export interface IProviderOptions {
     resolving?: Resolving;
 }
 
-export type RegistrationFn<T> = (locator: IServiceLocator, ...args: any[]) => T;
+export type ResolvingFn<T> = (locator: IServiceLocator, ...args: any[]) => T;
 
-export interface IRegistration<T> {
-    fn: RegistrationFn<T>;
-    options?: IProviderOptions;
+export type ProviderFn<T> = (...args: any[]) => T;
+
+export interface IProvider<T> extends IDisposable {
+    resolving: Resolving;
+    resolve(...args: any[]): T;
+    clone(options?: IProviderOptions): IProvider<T>;
+    bindTo(locator: IServiceLocator): this;
 }
 
-export type RegistrationKey = string | symbol;
+export type ProviderKey<T> = string | symbol | constructor<T>;

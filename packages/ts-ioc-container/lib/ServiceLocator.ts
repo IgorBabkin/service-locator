@@ -1,114 +1,76 @@
-import { constructor, IServiceLocator } from './IServiceLocator';
-import { InjectionToken } from './strategy/ioc/decorators';
-import { IServiceLocatorStrategy } from './strategy/IServiceLocatorStrategy';
-import { IProviderOptions, IRegistration, RegistrationFn, RegistrationKey } from './IRegistration';
-import { IInstanceHook } from './instanceHooks/IInstanceHook';
-import { IStrategyFactory } from './strategy/IStrategyFactory';
+import {
+    ProviderKey,
+    IProvider,
+    IServiceLocatorStrategy,
+    IStrategyFactory,
+    InjectionToken,
+    IProviderOptions,
+    ResolvingFn,
+} from 'index';
+import { IProviderFactory } from 'IProviderFactory';
+import { constructor, IServiceLocator } from 'IServiceLocator';
 
 export class ServiceLocator implements IServiceLocator {
-    private registrations: Map<RegistrationKey, IRegistration<any>> = new Map();
-    private instances: Map<RegistrationKey, any> = new Map();
+    private providers = new Map<ProviderKey<any>, IProvider<any>>();
     private parent: ServiceLocator;
     private strategy: IServiceLocatorStrategy;
 
-    constructor(private strategyFactory: IStrategyFactory, private hooks: IInstanceHook) {
+    constructor(private strategyFactory: IStrategyFactory, private providerFactory: IProviderFactory) {
         this.strategy = strategyFactory.create(this);
     }
 
-    public resolve<T>(key: InjectionToken<T>, ...deps: any[]): T {
-        if (typeof key === 'string' || typeof key === 'symbol') {
-            const instance = this.resolveLocally<T>(key, ...deps) || this.parent?.resolve<T>(key, ...deps);
-            if (!instance) {
-                throw new Error(`ServiceLocator: cannot find ${key.toString()}`);
-            }
-            return instance;
+    resolve<T>(key: InjectionToken<T>, ...deps: any[]): T {
+        const instance = this.resolveLocally(key, ...deps) || this.parent?.resolve<T>(key, ...deps);
+        if (!instance) {
+            throw new Error(`ServiceLocator: cannot find ${key.toString()}`);
         }
-        return this.resolveConstructor(key, ...deps);
+        return instance;
     }
 
-    public createContainer(): IServiceLocator {
-        const locator = new ServiceLocator(this.strategyFactory, this.hooks);
+    createContainer(): IServiceLocator {
+        const locator = new ServiceLocator(this.strategyFactory, this.providerFactory);
         locator.addTo(this);
-        for (const [key, { options, fn }] of this.registrations.entries()) {
-            if (options?.resolving === 'perScope') {
-                locator.registerFunction(key, fn, { resolving: 'singleton' });
+        for (const [key, provider] of this.providers.entries()) {
+            if (provider.resolving === 'perScope') {
+                locator.registerProvider(key, provider.clone({ resolving: 'singleton' }));
             }
         }
         return locator;
     }
 
-    public remove(): void {
+    remove(): void {
         this.parent = null;
-        for (const instance of this.instances.values()) {
-            this.hooks.onRemoveInstance(instance);
+        for (const provider of this.providers.values()) {
+            provider.dispose();
         }
-        this.instances = new Map();
-        this.registrations = new Map();
+        this.providers = new Map();
         this.strategy.dispose();
     }
 
-    public addTo(locator: ServiceLocator): this {
+    addTo(locator: ServiceLocator): this {
         this.parent = locator;
         return this;
     }
 
-    public registerConstructor<T>(
-        key: RegistrationKey,
-        value: constructor<T>,
-        options: IProviderOptions = { resolving: 'perRequest' },
-    ): this {
-        this.registerFunction(key, (l, ...deps: any[]) => l.resolve(value, ...deps), options);
+    registerProvider<T>(key: ProviderKey<T>, provider: IProvider<T>): this {
+        this.providers.set(key, provider);
+        provider.bindTo(this);
         return this;
     }
 
-    public registerInstance<T>(key: RegistrationKey, value: T): this {
-        this.registerFunction(key, () => value);
-        return this;
-    }
-
-    public registerFunction<T>(
-        key: RegistrationKey,
-        resolveFn: RegistrationFn<T>,
-        options: IProviderOptions = { resolving: 'perRequest' },
-    ): this {
-        this.registrations.set(key, {
-            fn: resolveFn,
-            options,
-        });
-        return this;
-    }
-
-    private resolveLocally<T>(key: RegistrationKey, ...deps: any[]): T {
-        const registration = this.registrations.get(key);
-        if (registration) {
-            switch (registration.options.resolving) {
-                case 'perRequest':
-                    return this.resolveFn(registration.fn, ...deps);
-                case 'singleton':
-                    return this.resolveSingleton(key, registration.fn, ...deps);
-            }
+    private resolveLocally<T>(key: ProviderKey<T>, ...args: any): T {
+        const isConstructor = typeof key === 'function';
+        if (isConstructor && !this.providers.has(key)) {
+            this.registerConstructor(key as constructor<T>, ...args);
         }
-        return undefined;
+        return this.providers.get(key)?.resolve(...args);
     }
 
-    private resolveFn<T>(fn: RegistrationFn<T>, ...deps: any[]): T {
-        const instance = fn(this, ...deps);
-        this.hooks.onCreateInstance(instance);
-        return instance;
-    }
-
-    private resolveSingleton<T>(key: RegistrationKey, value: RegistrationFn<T>, ...deps: any[]): T {
-        if (!this.instances.has(key)) {
-            const instance = this.resolveFn(value, ...deps);
-            this.instances.set(key, instance);
-        }
-
-        return this.instances.get(key) as T;
-    }
-
-    private resolveConstructor<T>(c: constructor<T>, ...deps: any[]): T {
-        const instance = this.strategy.resolveConstructor(c, ...deps);
-        this.hooks.onCreateInstance(instance);
-        return instance;
+    private registerConstructor<T>(key: constructor<T>, ...args: any): this {
+        this.registerProvider(
+            key,
+            this.providerFactory.create(() => this.strategy.resolveConstructor(key as constructor<T>, ...args)),
+        );
+        return this;
     }
 }

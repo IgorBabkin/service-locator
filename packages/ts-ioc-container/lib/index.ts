@@ -1,5 +1,5 @@
 export { constructor, IServiceLocator } from './IServiceLocator';
-export { ServiceLocator } from './ServiceLocator';
+export { ServiceLocator } from './ServiceLocatorAdapter';
 export { ServiceLocatorFactory } from './ServiceLocatorFactory';
 export * from './IRegistration';
 export { IServiceLocatorStrategy } from './strategy/IServiceLocatorStrategy';
