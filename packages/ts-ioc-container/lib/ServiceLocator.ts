@@ -4,12 +4,14 @@ import { IServiceLocatorStrategy } from './strategy/IServiceLocatorStrategy';
 import { IProviderOptions, IRegistration, RegistrationFn, RegistrationKey } from './IRegistration';
 import { IInstanceHook } from './instanceHooks/IInstanceHook';
 import { IStrategyFactory } from './strategy/IStrategyFactory';
+import { IInjectable } from 'instanceHooks/IInjectable';
 
 export class ServiceLocator implements IServiceLocator {
     private registrations: Map<RegistrationKey, IRegistration<any>> = new Map();
-    private instances: Map<RegistrationKey, any> = new Map();
+    private singletons: Map<RegistrationKey, IInjectable> = new Map();
     private parent: ServiceLocator;
     private strategy: IServiceLocatorStrategy;
+    private instances: IInjectable[] = [];
 
     constructor(private strategyFactory: IStrategyFactory, private hooks: IInstanceHook) {
         this.strategy = strategyFactory.create(this);
@@ -39,30 +41,16 @@ export class ServiceLocator implements IServiceLocator {
 
     public remove(): void {
         this.parent = null;
-        for (const instance of this.instances.values()) {
+        for (const instance of [...this.singletons.values(), ...this.instances.values()]) {
             this.hooks.onRemoveInstance(instance);
         }
-        this.instances = new Map();
+        this.singletons = new Map();
         this.registrations = new Map();
         this.strategy.dispose();
     }
 
     public addTo(locator: ServiceLocator): this {
         this.parent = locator;
-        return this;
-    }
-
-    public registerConstructor<T>(
-        key: RegistrationKey,
-        value: constructor<T>,
-        options: IProviderOptions = { resolving: 'perRequest' },
-    ): this {
-        this.registerFunction(key, (l, ...deps: any[]) => l.resolve(value, ...deps), options);
-        return this;
-    }
-
-    public registerInstance<T>(key: RegistrationKey, value: T): this {
-        this.registerFunction(key, () => value);
         return this;
     }
 
@@ -86,6 +74,8 @@ export class ServiceLocator implements IServiceLocator {
                     return this.resolveFn(registration.fn, ...deps);
                 case 'singleton':
                     return this.resolveSingleton(key, registration.fn, ...deps);
+                default:
+                    throw new Error('Unsupported resolving key');
             }
         }
         return undefined;
@@ -94,21 +84,24 @@ export class ServiceLocator implements IServiceLocator {
     private resolveFn<T>(fn: RegistrationFn<T>, ...deps: any[]): T {
         const instance = fn(this, ...deps);
         this.hooks.onCreateInstance(instance);
+        this.instances.push(instance);
         return instance;
     }
 
-    private resolveSingleton<T>(key: RegistrationKey, value: RegistrationFn<T>, ...deps: any[]): T {
-        if (!this.instances.has(key)) {
-            const instance = this.resolveFn(value, ...deps);
-            this.instances.set(key, instance);
+    private resolveSingleton<T>(key: RegistrationKey, fn: RegistrationFn<T>, ...deps: any[]): T {
+        if (!this.singletons.has(key)) {
+            const instance = fn(this, ...deps);
+            this.hooks.onCreateInstance(instance);
+            this.singletons.set(key, instance);
         }
 
-        return this.instances.get(key) as T;
+        return this.singletons.get(key) as T;
     }
 
     private resolveConstructor<T>(c: constructor<T>, ...deps: any[]): T {
         const instance = this.strategy.resolveConstructor(c, ...deps);
         this.hooks.onCreateInstance(instance);
+        this.instances.push(instance);
         return instance;
     }
 }
