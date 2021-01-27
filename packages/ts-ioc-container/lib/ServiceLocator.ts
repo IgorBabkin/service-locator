@@ -1,21 +1,16 @@
-import {
-    ProviderKey,
-    IProvider,
-    IServiceLocatorStrategy,
-    IStrategyFactory,
-    InjectionToken,
-    IProviderOptions,
-    ResolvingFn,
-} from 'index';
+import { InjectionToken, IProvider, IServiceLocatorStrategy, IStrategyFactory, ProviderKey } from 'index';
 import { IProviderFactory } from 'IProviderFactory';
 import { constructor, IServiceLocator } from 'IServiceLocator';
 
 export class ServiceLocator implements IServiceLocator {
     private providers = new Map<ProviderKey<any>, IProvider<any>>();
-    private parent: ServiceLocator;
     private strategy: IServiceLocatorStrategy;
 
-    constructor(private strategyFactory: IStrategyFactory, private providerFactory: IProviderFactory) {
+    constructor(
+        private strategyFactory: IStrategyFactory,
+        private providerFactory: IProviderFactory,
+        private parent?: ServiceLocator,
+    ) {
         this.strategy = strategyFactory.create(this);
     }
 
@@ -28,8 +23,7 @@ export class ServiceLocator implements IServiceLocator {
     }
 
     createContainer(): IServiceLocator {
-        const locator = new ServiceLocator(this.strategyFactory, this.providerFactory);
-        locator.addTo(this);
+        const locator = new ServiceLocator(this.strategyFactory, this.providerFactory, this);
         for (const [key, provider] of this.providers.entries()) {
             if (provider.resolving === 'perScope') {
                 locator.registerProvider(key, provider.clone({ resolving: 'singleton' }));
@@ -47,14 +41,8 @@ export class ServiceLocator implements IServiceLocator {
         this.strategy.dispose();
     }
 
-    addTo(locator: ServiceLocator): this {
-        this.parent = locator;
-        return this;
-    }
-
     registerProvider<T>(key: ProviderKey<T>, provider: IProvider<T>): this {
-        this.providers.set(key, provider);
-        provider.bindTo(this);
+        this.providers.set(key, provider.bindTo(this));
         return this;
     }
 
